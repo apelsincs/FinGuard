@@ -19,7 +19,9 @@ from app.bot.handlers import (
     view_budget,
     fraud_alerts,
     settings_command,
-    statistics_command
+    statistics_command,
+    delete_transaction_command,
+    balance_command
 )
 
 logger = get_logger(__name__)
@@ -58,7 +60,7 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher()
     
-    # Регистрируем обработчики
+    # Регистрируем обработчики команд
     dp.message.register(start_command, Command("start"))
     dp.message.register(help_command, Command("help"))
     dp.message.register(settings_command, Command("settings"))
@@ -68,6 +70,8 @@ async def main() -> None:
     dp.message.register(set_budget, Command("set_budget"))
     dp.message.register(fraud_alerts, Command("alerts"))
     dp.message.register(statistics_command, Command("stats"))
+    dp.message.register(delete_transaction_command, Command("delete"))
+    dp.message.register(balance_command, Command("balance"))
     
     # Обработчик всех текстовых сообщений (для добавления транзакций)
     dp.message.register(add_transaction)

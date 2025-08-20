@@ -105,99 +105,127 @@ async def help_command(message: types.Message) -> None:
 
 
 async def add_transaction(message: types.Message) -> None:
-    """Обработчик добавления транзакции"""
+    """Обработчик добавления транзакций"""
     user = message.from_user
-    text = message.text
+    text = message.text.strip()
     
     # Пропускаем команды
     if text.startswith('/'):
         return
     
-    # Парсим сообщение
+    # Валидация формата
+    if not text or len(text) < 2:
+        await message.answer("❌ Пожалуйста, укажите сумму и описание.\nПример: '500 еда' или '-1000 такси'")
+        return
+    
+    # Парсим сумму и описание
     try:
-        # Простой парсер: "сумма описание" или "-сумма описание"
-        match = re.match(r'^(-?\d+(?:\.\d+)?)\s+(.+)$', text.strip())
+        # Ищем число в начале строки (может быть отрицательным)
+        match = re.match(r'^(-?\d+(?:\.\d+)?)\s+(.+)$', text)
         if not match:
             await message.answer(
-                "❌ Неверный формат. Используйте: сумма описание\n"
-                "Примеры: '500 еда' или '-1000 такси'"
+                "❌ Неверный формат. Используйте: 'сумма описание'\n"
+                "Примеры:\n"
+                "• 500 еда\n"
+                "• -1000 такси\n"
+                "• 1500.50 зарплата"
             )
             return
         
         amount = float(match.group(1))
         description = match.group(2).strip()
         
-        # Определяем тип транзакции
-        transaction_type = TransactionType.EXPENSE if amount < 0 else TransactionType.INCOME
-        amount = abs(amount)  # Сохраняем положительное значение
+        # Валидация суммы
+        if amount == 0:
+            await message.answer("❌ Сумма не может быть равна нулю")
+            return
         
-        # Получаем пользователя
-        db_user = get_or_create_user(
-            telegram_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name
-        )
+        if abs(amount) > 1000000000:  # 1 миллиард
+            await message.answer("❌ Сумма слишком большая")
+            return
         
-        # Создаем транзакцию
-        db = SessionLocal()
-        try:
-            transaction = Transaction(
-                user_id=db_user.id,
-                amount=amount,
-                description=description,
-                type=transaction_type,
-                status=TransactionStatus.CONFIRMED,
-                transaction_date=datetime.now()
-            )
-            db.add(transaction)
-            db.commit()
-            db.refresh(transaction)
-            
-            # Анализируем транзакцию на мошенничество
-            fraud_service = FraudDetectionService(db)
-            analysis = fraud_service.analyze_transaction(transaction)
-            
-            # Обновляем транзакцию с результатами анализа
-            transaction.is_suspicious = analysis['is_suspicious']
-            transaction.fraud_score = analysis['fraud_score']
-            transaction.fraud_reasons = ', '.join(analysis['reasons']) if analysis['reasons'] else None
-            db.commit()
-            
-            # Создаем уведомление если транзакция подозрительная
-            if analysis['is_suspicious']:
-                fraud_service.create_fraud_alert(transaction, analysis)
-            
-            # Формируем ответ
-            emoji = "💸" if transaction_type == TransactionType.EXPENSE else "💰"
-            status_text = "расход" if transaction_type == TransactionType.EXPENSE else "доход"
-            
-            response = f"""
-{emoji} Транзакция добавлена!
-
-💰 Сумма: {amount} ₽
-📝 Описание: {description}
-📊 Тип: {status_text}
-✅ Статус: Подтверждена
-            """
-            
-            # Добавляем предупреждение если транзакция подозрительная
-            if analysis['is_suspicious']:
-                response += f"\n⚠️ Подозрительная транзакция!\n"
-                response += f"Оценка риска: {analysis['fraud_score']:.1%}\n"
-                response += f"Причины: {', '.join(analysis['reasons'])}"
-            
-            await message.answer(response)
-            logger.info(f"Добавлена транзакция: {amount} ₽ - {description}")
-            
-        except Exception as e:
-            logger.error(f"Ошибка при добавлении транзакции: {e}")
-            await message.answer("❌ Ошибка при сохранении транзакции")
-        finally:
-            db.close()
+        # Валидация описания
+        if len(description) > 200:
+            await message.answer("❌ Описание слишком длинное (максимум 200 символов)")
+            return
+        
+        if not description:
+            await message.answer("❌ Укажите описание транзакции")
+            return
             
     except ValueError:
-        await message.answer("❌ Неверный формат суммы")
+        await message.answer("❌ Неверный формат суммы. Используйте числа, например: 500 или -1000")
+        return
+    
+    # Определяем тип транзакции
+    transaction_type = TransactionType.INCOME if amount > 0 else TransactionType.EXPENSE
+    abs_amount = abs(amount)
+    
+    # Получаем или создаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        # Создаем транзакцию
+        transaction = Transaction(
+            user_id=db_user.id,
+            amount=abs_amount,
+            currency="RUB",
+            description=description,
+            type=transaction_type,
+            status=TransactionStatus.CONFIRMED,
+            transaction_date=datetime.now()
+        )
+        
+        db.add(transaction)
+        db.commit()
+        db.refresh(transaction)
+        
+        # Анализируем на подозрительность
+        fraud_service = FraudDetectionService(db)
+        analysis = fraud_service.analyze_transaction(transaction)
+        
+        # Обновляем транзакцию с результатами анализа
+        transaction.is_suspicious = analysis['is_suspicious']
+        transaction.fraud_score = analysis['fraud_score']
+        transaction.fraud_reasons = ', '.join(analysis['reasons']) if analysis['reasons'] else None
+        
+        db.commit()
+        
+        # Формируем ответ
+        emoji = "💰" if transaction_type == TransactionType.INCOME else "💸"
+        type_text = "доход" if transaction_type == TransactionType.INCOME else "расход"
+        
+        response = f"{emoji} Транзакция добавлена!\n"
+        response += f"💰 Сумма: {abs_amount} ₽\n"
+        response += f"📝 Описание: {description}\n"
+        response += f"📊 Тип: {type_text}\n"
+        response += f"✅ Статус: Подтверждена"
+        
+        # Добавляем предупреждение о подозрительности
+        if analysis['is_suspicious']:
+            response += f"\n\n⚠️ Подозрительная транзакция!\n"
+            response += f"Оценка риска: {int(analysis['fraud_score'] * 100)}%\n"
+            response += f"Причины: {', '.join(analysis['reasons'])}"
+            
+            # Создаем уведомление о мошенничестве
+            if db_user.fraud_alerts_enabled:
+                fraud_service.create_fraud_alert(transaction, analysis)
+        
+        await message.answer(response)
+        logger.info(f"Добавлена транзакция: {abs_amount} ₽ - {description}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении транзакции: {e}")
+        await message.answer("❌ Произошла ошибка при добавлении транзакции. Попробуйте еще раз.")
+        db.rollback()
+    finally:
+        db.close()
 
 
 async def view_transactions(message: types.Message) -> None:
@@ -644,5 +672,135 @@ async def settings_command(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при изменении настроек: {e}")
         await message.answer("❌ Ошибка при изменении настроек")
+    finally:
+        db.close()
+
+
+async def delete_transaction_command(message: types.Message) -> None:
+    """Обработчик удаления транзакций"""
+    user = message.from_user
+    text = message.text.strip()
+    
+    # Парсим команду: /delete ID
+    parts = text.split()
+    if len(parts) != 2:
+        await message.answer(
+            "🗑️ Удаление транзакции\n\n"
+            "Использование: /delete ID\n"
+            "Пример: /delete 123\n\n"
+            "Чтобы найти ID транзакции, используйте /transactions"
+        )
+        return
+    
+    try:
+        transaction_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID транзакции должен быть числом")
+        return
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        # Находим транзакцию
+        transaction = db.query(Transaction).filter(
+            Transaction.id == transaction_id,
+            Transaction.user_id == db_user.id
+        ).first()
+        
+        if not transaction:
+            await message.answer("❌ Транзакция не найдена или у вас нет прав на её удаление")
+            return
+        
+        # Сохраняем информацию для лога
+        amount = transaction.amount
+        description = transaction.description
+        transaction_type = transaction.type
+        
+        # Удаляем транзакцию
+        db.delete(transaction)
+        db.commit()
+        
+        # Формируем ответ
+        emoji = "💰" if transaction_type == TransactionType.INCOME else "💸"
+        type_text = "доход" if transaction_type == TransactionType.INCOME else "расход"
+        
+        response = f"🗑️ Транзакция удалена!\n"
+        response += f"💰 Сумма: {amount} ₽\n"
+        response += f"📝 Описание: {description}\n"
+        response += f"📊 Тип: {type_text}\n"
+        response += f"🆔 ID: {transaction_id}"
+        
+        await message.answer(response)
+        logger.info(f"Удалена транзакция {transaction_id}: {amount} ₽ - {description}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при удалении транзакции: {e}")
+        await message.answer("❌ Произошла ошибка при удалении транзакции")
+        db.rollback()
+    finally:
+        db.close()
+
+
+async def balance_command(message: types.Message) -> None:
+    """Обработчик команды баланса"""
+    user = message.from_user
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        # Получаем все транзакции пользователя
+        transactions = db.query(Transaction).filter(
+            Transaction.user_id == db_user.id,
+            Transaction.status == TransactionStatus.CONFIRMED
+        ).all()
+        
+        # Подсчитываем баланс
+        total_income = sum(t.amount for t in transactions if t.type == TransactionType.INCOME)
+        total_expense = sum(t.amount for t in transactions if t.type == TransactionType.EXPENSE)
+        balance = total_income - total_expense
+        
+        # Получаем статистику за последние 30 дней
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        recent_transactions = db.query(Transaction).filter(
+            Transaction.user_id == db_user.id,
+            Transaction.status == TransactionStatus.CONFIRMED,
+            Transaction.transaction_date >= thirty_days_ago
+        ).all()
+        
+        recent_income = sum(t.amount for t in recent_transactions if t.type == TransactionType.INCOME)
+        recent_expense = sum(t.amount for t in recent_transactions if t.type == TransactionType.EXPENSE)
+        recent_balance = recent_income - recent_expense
+        
+        # Формируем ответ
+        response = f"💳 Баланс FinGuard\n\n"
+        response += f"📊 Общий баланс:\n"
+        response += f"💰 Доходы: +{total_income:,.0f} ₽\n"
+        response += f"💸 Расходы: -{total_expense:,.0f} ₽\n"
+        response += f"💳 Баланс: {balance:+,.0f} ₽\n\n"
+        response += f"📈 За последние 30 дней:\n"
+        response += f"💰 Доходы: +{recent_income:,.0f} ₽\n"
+        response += f"💸 Расходы: -{recent_expense:,.0f} ₽\n"
+        response += f"💳 Баланс: {recent_balance:+,.0f} ₽\n\n"
+        response += f"📊 Всего транзакций: {len(transactions)}"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении баланса: {e}")
+        await message.answer("❌ Ошибка при получении баланса")
     finally:
         db.close()
