@@ -55,7 +55,11 @@ from app.bot.handlers import (
     trends_command,
     recommendations_command,
     financial_health_command,
-    compare_periods_command
+    compare_periods_command,
+    import_csv_command,
+    csv_template_command,
+    import_status_command,
+    handle_document
 )
 
 logger = get_logger(__name__)
@@ -140,6 +144,12 @@ async def main() -> None:
     dp.message.register(recommendations_command, Command("recommendations"))
     dp.message.register(financial_health_command, Command("financial_health"))
     dp.message.register(compare_periods_command, Command("compare_periods"))
+    dp.message.register(import_csv_command, Command("import_csv"))
+    dp.message.register(csv_template_command, Command("csv_template"))
+    dp.message.register(import_status_command, Command("import_status"))
+    
+    # Обработчик документов (CSV файлов)
+    dp.message.register(handle_document, lambda m: m.document is not None)
     
     # Обработчик всех текстовых сообщений (для добавления транзакций)
     dp.message.register(add_transaction)

@@ -22,6 +22,7 @@ from app.services.transfers import TransferService
 from app.services.two_factor import TwoFactorService
 from app.services.transaction_status import TransactionStatusService
 from app.services.analytics import AnalyticsService
+from app.services.csv_import import CSVImportService
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -139,6 +140,11 @@ async def help_command(message: types.Message) -> None:
 • /recommendations - Рекомендации по экономии
 • /financial_health - Оценка финансового здоровья
 • /compare_periods - Сравнение периодов
+
+📁 Импорт данных:
+• /import_csv - Импорт из CSV файла банка
+• /csv_template банк - Шаблон CSV для банка
+• /import_status - Статус импорта
 
 🔒 Безопасность:
 • /alerts - Уведомления о подозрительных операциях
@@ -2121,6 +2127,17 @@ async def two_factor_status_command(message: types.Message) -> None:
         db.close()
 
 
+async def handle_document(message: types.Message) -> None:
+    """Обработчик документов (CSV файлов)"""
+    # Проверяем, что это CSV файл
+    if message.document and message.document.file_name.lower().endswith('.csv'):
+        # Перенаправляем на команду импорта
+        await import_csv_command(message)
+    else:
+        await message.answer("📁 Для импорта данных отправьте CSV файл с выпиской банка\n\n"
+                           "💡 Используйте /import_csv для получения инструкций")
+
+
 async def confirm_transaction_command(message: types.Message) -> None:
     """Обработчик команды /confirm_transaction - подтверждение транзакции"""
     user = message.from_user
@@ -2471,5 +2488,163 @@ async def compare_periods_command(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при сравнении периодов: {e}")
         await message.answer("❌ Произошла ошибка при сравнении периодов")
+    finally:
+        db.close()
+
+
+async def import_csv_command(message: types.Message) -> None:
+    """Обработчик команды /import_csv - импорт транзакций из CSV файла"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    # Проверяем, есть ли прикрепленный файл
+    if not message.document:
+        response = "📁 Импорт транзакций из CSV файла\n\n"
+        response += "💡 Как использовать:\n"
+        response += "1. Скачайте выписку из вашего банка в формате CSV\n"
+        response += "2. Отправьте файл в этот чат\n"
+        response += "3. Бот автоматически определит формат и импортирует данные\n\n"
+        response += "🏦 Поддерживаемые банки:\n"
+        response += "• Альфа-Банк - автоматическое определение\n"
+        response += "• Т-Банк - автоматическое определение\n\n"
+        response += "📋 Команды:\n"
+        response += "• /csv_template alfabank - шаблон для Альфа-Банка\n"
+        response += "• /csv_template tbank - шаблон для Т-Банка\n"
+        response += "• /import_status - статус последнего импорта"
+        
+        await message.answer(response)
+        return
+    
+    # Проверяем, что это CSV файл
+    if not message.document.file_name.lower().endswith('.csv'):
+        await message.answer("❌ Пожалуйста, отправьте файл в формате CSV (.csv)")
+        return
+    
+    await message.answer("📁 Обрабатываю CSV файл...")
+    
+    try:
+        # Скачиваем файл
+        file_info = await message.bot.get_file(message.document.file_id)
+        file_content = await message.bot.download_file(file_info.file_path)
+        
+        # Читаем содержимое файла
+        csv_content = file_content.read().decode('utf-8')
+        
+        db = SessionLocal()
+        try:
+            import_service = CSVImportService(db)
+            
+            # Импортируем транзакции
+            result = import_service.import_transactions(db_user.id, csv_content)
+            
+            if result['success']:
+                response = f"✅ Импорт завершен успешно!\n\n"
+                response += f"📊 Результаты:\n"
+                response += f"• Импортировано: {result['imported']} транзакций\n"
+                response += f"• Пропущено (дубликаты): {result['skipped']}\n"
+                response += f"• Ошибок: {result['errors']}\n"
+                response += f"• Всего обработано: {result['total']}\n"
+                response += f"• Банк: {result['bank'].title()}\n\n"
+                
+                if result['imported'] > 0:
+                    response += f"🎉 Теперь у вас {result['imported']} новых транзакций!\n"
+                    response += f"💡 Используйте /transactions для просмотра\n"
+                    response += f"📊 Используйте /stats для анализа"
+                else:
+                    response += f"ℹ️ Новых транзакций не добавлено\n"
+                    response += f"💡 Возможно, все транзакции уже есть в базе"
+                
+                await message.answer(response)
+            else:
+                await message.answer(f"❌ Ошибка при импорте: {result['error']}")
+        
+        except Exception as e:
+            logger.error(f"Ошибка при импорте CSV: {e}")
+            await message.answer("❌ Произошла ошибка при обработке файла")
+        finally:
+            db.close()
+    
+    except Exception as e:
+        logger.error(f"Ошибка при скачивании файла: {e}")
+        await message.answer("❌ Не удалось скачать файл. Попробуйте еще раз.")
+
+
+async def csv_template_command(message: types.Message) -> None:
+    """Обработчик команды /csv_template - получение шаблона CSV файла"""
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите название банка\n\n"
+                           "Примеры:\n"
+                           "• /csv_template alfabank\n"
+                           "• /csv_template tbank")
+        return
+    
+    bank_name = args[1].lower()
+    
+    if bank_name not in ['alfabank', 'tbank']:
+        await message.answer("❌ Поддерживаемые банки: alfabank, tbank")
+        return
+    
+    db = SessionLocal()
+    try:
+        import_service = CSVImportService(db)
+        template = import_service.get_import_template(bank_name)
+        
+        response = f"📋 Шаблон CSV файла для {bank_name.title()}:\n\n"
+        response += "```csv\n"
+        response += template
+        response += "\n```\n\n"
+        response += "💡 Инструкции:\n"
+        response += "1. Скопируйте этот шаблон в текстовый редактор\n"
+        response += "2. Замените данные на ваши реальные транзакции\n"
+        response += "3. Сохраните файл с расширением .csv\n"
+        response += "4. Отправьте файл боту для импорта"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении шаблона: {e}")
+        await message.answer("❌ Произошла ошибка при получении шаблона")
+    finally:
+        db.close()
+
+
+async def import_status_command(message: types.Message) -> None:
+    """Обработчик команды /import_status - статус импорта"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        # Получаем последние импортированные транзакции
+        recent_imports = db.query(Transaction).filter(
+            Transaction.user_id == db_user.id,
+            Transaction.description.like('Импорт из%')
+        ).order_by(Transaction.created_at.desc()).limit(5).all()
+        
+        if not recent_imports:
+            await message.answer("📭 У вас пока нет импортированных транзакций\n\n"
+                               "💡 Используйте /import_csv для импорта данных из банка")
+            return
+        
+        response = "📊 Статус импорта:\n\n"
+        response += "🔄 Последние импортированные транзакции:\n"
+        
+        for i, transaction in enumerate(recent_imports, 1):
+            bank_name = transaction.description.replace('Импорт из ', '').replace('Банка', 'Банк')
+            response += f"{i}. {bank_name}\n"
+            response += f"   💰 {transaction.amount:,.0f} ₽ - {transaction.description}\n"
+            response += f"   📅 {transaction.transaction_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+        
+        response += "💡 Команды:\n"
+        response += "• /import_csv - импорт новых данных\n"
+        response += "• /transactions - просмотр всех транзакций\n"
+        response += "• /stats - анализ импортированных данных"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статуса импорта: {e}")
+        await message.answer("❌ Произошла ошибка при получении статуса")
     finally:
         db.close()

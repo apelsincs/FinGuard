@@ -48,6 +48,10 @@ from .commands import (
     recommendations_command,
     financial_health_command,
     compare_periods_command,
+    import_csv_command,
+    csv_template_command,
+    import_status_command,
+    handle_document,
     get_or_create_user
 )
 
@@ -97,5 +101,9 @@ __all__ = [
     'recommendations_command',
     'financial_health_command',
     'compare_periods_command',
+    'import_csv_command',
+    'csv_template_command',
+    'import_status_command',
+    'handle_document',
     'get_or_create_user'
 ]

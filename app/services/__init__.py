@@ -10,6 +10,7 @@ from .transfers import TransferService
 from .two_factor import TwoFactorService
 from .transaction_status import TransactionStatusService
 from .analytics import AnalyticsService
+from .csv_import import CSVImportService
 
 __all__ = [
     'FraudDetectionService',
@@ -21,5 +22,6 @@ __all__ = [
     'TransferService',
     'TwoFactorService',
     'TransactionStatusService',
-    'AnalyticsService'
+    'AnalyticsService',
+    'CSVImportService'
 ]
