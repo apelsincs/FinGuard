@@ -1,0 +1,20 @@
+# Telegram Bot Framework
+aiogram>=3.0.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Security & Encryption
+cryptography>=40.0.0
+bcrypt>=4.0.0
+python-dotenv>=1.0.0
+
+# Utilities
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+loguru>=0.7.0
+
+# Development (optional)
+pytest>=7.0.0
+black>=23.0.0
+flake8>=6.0.0
