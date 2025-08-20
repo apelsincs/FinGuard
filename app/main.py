@@ -35,7 +35,27 @@ from app.bot.handlers import (
     export_excel_command,
     export_csv_command,
     export_pdf_command,
-    monthly_report_command
+    monthly_report_command,
+    payment_methods_command,
+    add_payment_method_command,
+    delete_payment_method_command,
+    set_default_payment_command,
+    transfer_command,
+    transfers_command,
+    enable_2fa_command,
+    disable_2fa_command,
+    verify_2fa_command,
+    backup_codes_command,
+    two_factor_status_command,
+    confirm_transaction_command,
+    reject_transaction_command,
+    pending_transactions_command,
+    transaction_status_summary_command,
+    forecast_command,
+    trends_command,
+    recommendations_command,
+    financial_health_command,
+    compare_periods_command
 )
 
 logger = get_logger(__name__)
@@ -100,6 +120,26 @@ async def main() -> None:
     dp.message.register(export_csv_command, Command("export_csv"))
     dp.message.register(export_pdf_command, Command("export_pdf"))
     dp.message.register(monthly_report_command, Command("monthly_report"))
+    dp.message.register(payment_methods_command, Command("payment_methods"))
+    dp.message.register(add_payment_method_command, Command("add_payment_method"))
+    dp.message.register(delete_payment_method_command, Command("delete_payment_method"))
+    dp.message.register(set_default_payment_command, Command("set_default_payment"))
+    dp.message.register(transfer_command, Command("transfer"))
+    dp.message.register(transfers_command, Command("transfers"))
+    dp.message.register(enable_2fa_command, Command("enable_2fa"))
+    dp.message.register(disable_2fa_command, Command("disable_2fa"))
+    dp.message.register(verify_2fa_command, Command("verify_2fa"))
+    dp.message.register(backup_codes_command, Command("backup_codes"))
+    dp.message.register(two_factor_status_command, Command("2fa_status"))
+    dp.message.register(confirm_transaction_command, Command("confirm_transaction"))
+    dp.message.register(reject_transaction_command, Command("reject_transaction"))
+    dp.message.register(pending_transactions_command, Command("pending_transactions"))
+    dp.message.register(transaction_status_summary_command, Command("transaction_status_summary"))
+    dp.message.register(forecast_command, Command("forecast"))
+    dp.message.register(trends_command, Command("trends"))
+    dp.message.register(recommendations_command, Command("recommendations"))
+    dp.message.register(financial_health_command, Command("financial_health"))
+    dp.message.register(compare_periods_command, Command("compare_periods"))
     
     # Обработчик всех текстовых сообщений (для добавления транзакций)
     dp.message.register(add_transaction)

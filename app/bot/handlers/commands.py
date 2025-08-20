@@ -17,6 +17,11 @@ from app.services.notifications import NotificationService
 from app.services.backup import BackupService
 from app.services.visualization import VisualizationService
 from app.services.reports import ReportService
+from app.services.payment_methods import PaymentMethodService
+from app.services.transfers import TransferService
+from app.services.two_factor import TwoFactorService
+from app.services.transaction_status import TransactionStatusService
+from app.services.analytics import AnalyticsService
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -92,6 +97,29 @@ async def help_command(message: types.Message) -> None:
 • /set_budget - Установить бюджет
 • /stats - Статистика за 30 дней
 
+💳 Платежные методы:
+• /payment_methods - Управление способами оплаты
+• /add_payment_method - Добавить способ оплаты
+• /delete_payment_method - Удалить способ оплаты
+• /set_default_payment - Установить по умолчанию
+
+💸 Переводы:
+• /transfer - Перевод между счетами
+• /transfers - История переводов
+
+🔐 Двухфакторная аутентификация:
+• /enable_2fa - Включить 2FA
+• /disable_2fa - Отключить 2FA
+• /verify_2fa - Проверить код
+• /backup_codes - Резервные коды
+• /2fa_status - Статус 2FA
+
+📊 Управление транзакциями:
+• /confirm_transaction - Подтвердить транзакцию
+• /reject_transaction - Отклонить транзакцию
+• /pending_transactions - Ожидающие транзакции
+• /transaction_status_summary - Сводка по статусам
+
 📈 Графики и визуализация:
 • /chart_expenses - График расходов
 • /chart_income - График доходов
@@ -105,6 +133,13 @@ async def help_command(message: types.Message) -> None:
 • /export_pdf - Экспорт в PDF
 • /monthly_report - Месячный отчет
 
+🔮 Аналитика и прогнозы:
+• /forecast - Прогноз расходов
+• /trends - Анализ трендов
+• /recommendations - Рекомендации по экономии
+• /financial_health - Оценка финансового здоровья
+• /compare_periods - Сравнение периодов
+
 🔒 Безопасность:
 • /alerts - Уведомления о подозрительных операциях
 
@@ -117,6 +152,9 @@ async def help_command(message: types.Message) -> None:
 • "-2000 аренда квартиры" - крупный расход
 • /set_budget 50000 месяц - установить месячный бюджет
 • /settings notifications off - отключить уведомления
+• /add_payment_method карта Сбербанк card 1234567890123456 123
+• /transfer 1 2 5000 перевод на карту
+• /enable_2fa - включить двухфакторную аутентификацию
     """
     
     await message.answer(help_text)
@@ -1652,5 +1690,786 @@ async def monthly_report_command(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при создании месячного отчета: {e}")
         await message.answer("❌ Произошла ошибка при создании отчета")
+    finally:
+        db.close()
+
+
+async def payment_methods_command(message: types.Message) -> None:
+    """Обработчик команды /payment_methods - управление способами оплаты"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        payment_service = PaymentMethodService(db)
+        
+        payment_methods = payment_service.get_user_payment_methods(db_user.id)
+        
+        if not payment_methods:
+            response = "💳 У вас пока нет способов оплаты\n\n"
+            response += "💡 Добавьте способ оплаты:\n"
+            response += "• /add_payment_method карта Сбербанк card 1234567890123456 123\n"
+            response += "• /add_payment_method наличные cash\n"
+            response += "• /add_payment_method кошелек ЮMoney digital_wallet"
+        else:
+            response = "💳 Ваши способы оплаты:\n\n"
+            
+            for i, method in enumerate(payment_methods, 1):
+                display = payment_service.format_payment_method_display(method)
+                response += f"{i}. {display}\n"
+            
+            response += "\n💡 Команды:\n"
+            response += "• /add_payment_method название тип [номер] [cvv]\n"
+            response += "• /delete_payment_method ID\n"
+            response += "• /set_default_payment ID\n"
+            response += "• /edit_payment_method ID новое_название"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении способов оплаты: {e}")
+        await message.answer("❌ Произошла ошибка при получении способов оплаты")
+    finally:
+        db.close()
+
+
+async def add_payment_method_command(message: types.Message) -> None:
+    """Обработчик команды /add_payment_method - добавление способа оплаты"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("❌ Укажите название и тип способа оплаты\n\n"
+                           "Примеры:\n"
+                           "• /add_payment_method карта Сбербанк card 1234567890123456 123\n"
+                           "• /add_payment_method наличные cash\n"
+                           "• /add_payment_method кошелек ЮMoney digital_wallet")
+        return
+    
+    db = SessionLocal()
+    try:
+        payment_service = PaymentMethodService(db)
+        
+        name = args[1]
+        method_type_str = args[2].lower()
+        
+        # Определяем тип способа оплаты
+        from app.database.models import PaymentMethodType
+        
+        if method_type_str == "card":
+            method_type = PaymentMethodType.CARD
+            card_number = args[3] if len(args) > 3 else None
+            cvv = args[4] if len(args) > 4 else None
+        elif method_type_str == "cash":
+            method_type = PaymentMethodType.CASH
+            card_number = None
+            cvv = None
+        elif method_type_str == "bank_transfer":
+            method_type = PaymentMethodType.BANK_TRANSFER
+            card_number = None
+            cvv = None
+        elif method_type_str == "digital_wallet":
+            method_type = PaymentMethodType.DIGITAL_WALLET
+            card_number = None
+            cvv = None
+        else:
+            await message.answer("❌ Неизвестный тип способа оплаты\n\n"
+                               "Доступные типы:\n"
+                               "• card - банковская карта\n"
+                               "• cash - наличные\n"
+                               "• bank_transfer - банковский перевод\n"
+                               "• digital_wallet - цифровой кошелек")
+            return
+        
+        result = payment_service.add_payment_method(
+            db_user.id, name, method_type, card_number, cvv
+        )
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении способа оплаты: {e}")
+        await message.answer("❌ Произошла ошибка при добавлении способа оплаты")
+    finally:
+        db.close()
+
+
+async def delete_payment_method_command(message: types.Message) -> None:
+    """Обработчик команды /delete_payment_method - удаление способа оплаты"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID способа оплаты\n\n"
+                           "Пример: /delete_payment_method 123")
+        return
+    
+    try:
+        payment_method_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом")
+        return
+    
+    db = SessionLocal()
+    try:
+        payment_service = PaymentMethodService(db)
+        
+        result = payment_service.delete_payment_method(payment_method_id, db_user.id)
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при удалении способа оплаты: {e}")
+        await message.answer("❌ Произошла ошибка при удалении способа оплаты")
+    finally:
+        db.close()
+
+
+async def set_default_payment_command(message: types.Message) -> None:
+    """Обработчик команды /set_default_payment - установка способа оплаты по умолчанию"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID способа оплаты\n\n"
+                           "Пример: /set_default_payment 123")
+        return
+    
+    try:
+        payment_method_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом")
+        return
+    
+    db = SessionLocal()
+    try:
+        payment_service = PaymentMethodService(db)
+        
+        result = payment_service.set_default_payment_method(payment_method_id, db_user.id)
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при установке способа оплаты по умолчанию: {e}")
+        await message.answer("❌ Произошла ошибка при установке способа оплаты по умолчанию")
+    finally:
+        db.close()
+
+
+async def transfer_command(message: types.Message) -> None:
+    """Обработчик команды /transfer - перевод между счетами"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 4:
+        await message.answer("❌ Укажите параметры перевода\n\n"
+                           "Формат: /transfer от_счета к_счету сумма [описание]\n\n"
+                           "Примеры:\n"
+                           "• /transfer 1 2 5000 перевод на карту\n"
+                           "• /transfer 2 3 10000 пополнение кошелька")
+        return
+    
+    try:
+        from_method_id = int(args[1])
+        to_method_id = int(args[2])
+        amount = float(args[3])
+        description = " ".join(args[4:]) if len(args) > 4 else "Перевод между счетами"
+    except ValueError:
+        await message.answer("❌ Неверный формат параметров")
+        return
+    
+    if amount <= 0:
+        await message.answer("❌ Сумма перевода должна быть больше нуля")
+        return
+    
+    db = SessionLocal()
+    try:
+        transfer_service = TransferService(db)
+        
+        result = transfer_service.create_transfer(
+            db_user.id, from_method_id, to_method_id, amount, description
+        )
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании перевода: {e}")
+        await message.answer("❌ Произошла ошибка при создании перевода")
+    finally:
+        db.close()
+
+
+async def transfers_command(message: types.Message) -> None:
+    """Обработчик команды /transfers - история переводов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    days = 30  # По умолчанию 30 дней
+    
+    if len(args) > 1:
+        try:
+            days = int(args[1])
+            if days <= 0 or days > 365:
+                await message.answer("❌ Количество дней должно быть от 1 до 365")
+                return
+        except ValueError:
+            await message.answer("❌ Укажите корректное количество дней")
+            return
+    
+    db = SessionLocal()
+    try:
+        transfer_service = TransferService(db)
+        
+        transfers = transfer_service.get_user_transfers(db_user.id, days)
+        
+        if not transfers:
+            await message.answer(f"📭 У вас нет переводов за последние {days} дней")
+            return
+        
+        response = f"💸 История переводов за последние {days} дней:\n\n"
+        
+        for i, transfer in enumerate(transfers[:10], 1):  # Показываем только 10 последних
+            display = transfer_service.format_transfer_display(transfer)
+            response += f"{i}. {display}\n\n"
+        
+        if len(transfers) > 10:
+            response += f"... и еще {len(transfers) - 10} переводов\n\n"
+        
+        # Статистика
+        stats = transfer_service.get_transfer_statistics(db_user.id, days)
+        response += f"📊 Статистика:\n"
+        response += f"• Всего переводов: {stats['total_transfers']}\n"
+        response += f"• Общая сумма: {stats['total_amount']:,.0f} ₽\n"
+        response += f"• Средняя сумма: {stats['average_amount']:,.0f} ₽\n"
+        if stats['total_fees'] > 0:
+            response += f"• Комиссии: {stats['total_fees']:,.0f} ₽"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении истории переводов: {e}")
+        await message.answer("❌ Произошла ошибка при получении истории переводов")
+    finally:
+        db.close()
+
+
+async def enable_2fa_command(message: types.Message) -> None:
+    """Обработчик команды /enable_2fa - включение двухфакторной аутентификации"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        two_factor_service = TwoFactorService(db)
+        
+        result = two_factor_service.enable_2fa(db_user.id)
+        
+        if result['success']:
+            response = f"✅ {result['message']}\n\n"
+            response += f"🔐 Код подтверждения: {result['code']}\n\n"
+            response += "⚠️ В реальном приложении код отправляется по SMS или email"
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при включении 2FA: {e}")
+        await message.answer("❌ Произошла ошибка при включении 2FA")
+    finally:
+        db.close()
+
+
+async def disable_2fa_command(message: types.Message) -> None:
+    """Обработчик команды /disable_2fa - отключение двухфакторной аутентификации"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите код подтверждения\n\n"
+                           "Пример: /disable_2fa 123456")
+        return
+    
+    code = args[1]
+    
+    db = SessionLocal()
+    try:
+        two_factor_service = TwoFactorService(db)
+        
+        result = two_factor_service.disable_2fa(db_user.id, code)
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при отключении 2FA: {e}")
+        await message.answer("❌ Произошла ошибка при отключении 2FA")
+    finally:
+        db.close()
+
+
+async def verify_2fa_command(message: types.Message) -> None:
+    """Обработчик команды /verify_2fa - проверка кода двухфакторной аутентификации"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите код подтверждения\n\n"
+                           "Пример: /verify_2fa 123456")
+        return
+    
+    code = args[1]
+    
+    db = SessionLocal()
+    try:
+        two_factor_service = TwoFactorService(db)
+        
+        result = two_factor_service.verify_2fa_code(db_user.id, code)
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке 2FA кода: {e}")
+        await message.answer("❌ Произошла ошибка при проверке кода")
+    finally:
+        db.close()
+
+
+async def backup_codes_command(message: types.Message) -> None:
+    """Обработчик команды /backup_codes - генерация резервных кодов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        two_factor_service = TwoFactorService(db)
+        
+        result = two_factor_service.generate_backup_codes(db_user.id)
+        
+        if result['success']:
+            response = f"✅ {result['message']}\n\n"
+            response += "🔑 Резервные коды:\n"
+            for i, code in enumerate(result['backup_codes'], 1):
+                response += f"{i}. {code}\n"
+            response += "\n⚠️ Сохраните эти коды в безопасном месте!"
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при генерации резервных кодов: {e}")
+        await message.answer("❌ Произошла ошибка при генерации резервных кодов")
+    finally:
+        db.close()
+
+
+async def two_factor_status_command(message: types.Message) -> None:
+    """Обработчик команды /2fa_status - статус двухфакторной аутентификации"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        two_factor_service = TwoFactorService(db)
+        
+        result = two_factor_service.get_2fa_status(db_user.id)
+        
+        if result['success']:
+            status_emoji = "🟢" if result['enabled'] else "🔴"
+            response = f"{status_emoji} {result['message']}\n\n"
+            
+            if result['enabled']:
+                response += "💡 Команды:\n"
+                response += "• /disable_2fa код - отключить 2FA\n"
+                response += "• /verify_2fa код - проверить код\n"
+                response += "• /backup_codes - резервные коды"
+            else:
+                response += "💡 Команды:\n"
+                response += "• /enable_2fa - включить 2FA"
+            
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статуса 2FA: {e}")
+        await message.answer("❌ Произошла ошибка при получении статуса")
+    finally:
+        db.close()
+
+
+async def confirm_transaction_command(message: types.Message) -> None:
+    """Обработчик команды /confirm_transaction - подтверждение транзакции"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID транзакции\n\n"
+                           "Пример: /confirm_transaction 123")
+        return
+    
+    try:
+        transaction_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом")
+        return
+    
+    db = SessionLocal()
+    try:
+        status_service = TransactionStatusService(db)
+        
+        result = status_service.confirm_transaction(transaction_id, db_user.id)
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при подтверждении транзакции: {e}")
+        await message.answer("❌ Произошла ошибка при подтверждении транзакции")
+    finally:
+        db.close()
+
+
+async def reject_transaction_command(message: types.Message) -> None:
+    """Обработчик команды /reject_transaction - отклонение транзакции"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID транзакции\n\n"
+                           "Пример: /reject_transaction 123 [причина]")
+        return
+    
+    try:
+        transaction_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом")
+        return
+    
+    reason = " ".join(args[2:]) if len(args) > 2 else None
+    
+    db = SessionLocal()
+    try:
+        status_service = TransactionStatusService(db)
+        
+        result = status_service.reject_transaction(transaction_id, db_user.id, reason)
+        
+        if result['success']:
+            await message.answer(f"✅ {result['message']}")
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при отклонении транзакции: {e}")
+        await message.answer("❌ Произошла ошибка при отклонении транзакции")
+    finally:
+        db.close()
+
+
+async def pending_transactions_command(message: types.Message) -> None:
+    """Обработчик команды /pending_transactions - ожидающие транзакции"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        status_service = TransactionStatusService(db)
+        
+        pending_transactions = status_service.get_pending_transactions(db_user.id, limit=10)
+        
+        if not pending_transactions:
+            await message.answer("📭 У вас нет ожидающих транзакций")
+            return
+        
+        response = "⏳ Ожидающие транзакции:\n\n"
+        
+        for i, transaction in enumerate(pending_transactions, 1):
+            status_display = status_service.format_transaction_status(transaction)
+            response += f"{i}. {status_display}\n"
+            response += f"   💰 {transaction.amount:,.0f} ₽ - {transaction.description}\n"
+            response += f"   📅 {transaction.transaction_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+        
+        response += "💡 Команды:\n"
+        response += "• /confirm_transaction ID - подтвердить\n"
+        response += "• /reject_transaction ID [причина] - отклонить"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении ожидающих транзакций: {e}")
+        await message.answer("❌ Произошла ошибка при получении ожидающих транзакций")
+    finally:
+        db.close()
+
+
+async def transaction_status_summary_command(message: types.Message) -> None:
+    """Обработчик команды /transaction_status_summary - сводка по статусам транзакций"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        status_service = TransactionStatusService(db)
+        
+        summary = status_service.get_transaction_status_summary(db_user.id)
+        
+        response = "📊 Сводка по статусам транзакций:\n\n"
+        response += f"⏳ Ожидающие: {summary['pending']}\n"
+        response += f"✅ Подтвержденные: {summary['confirmed']}\n"
+        response += f"❌ Отклоненные: {summary['rejected']}\n"
+        response += f"⚠️ Подозрительные: {summary['suspicious']}\n"
+        response += f"📈 Всего: {summary['total']}"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении сводки статусов: {e}")
+        await message.answer("❌ Произошла ошибка при получении сводки")
+    finally:
+        db.close()
+
+
+async def forecast_command(message: types.Message) -> None:
+    """Обработчик команды /forecast - прогноз расходов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    days = 30  # По умолчанию 30 дней
+    
+    if len(args) > 1:
+        try:
+            days = int(args[1])
+            if days <= 0 or days > 365:
+                await message.answer("❌ Количество дней должно быть от 1 до 365")
+                return
+        except ValueError:
+            await message.answer("❌ Укажите корректное количество дней")
+            return
+    
+    db = SessionLocal()
+    try:
+        analytics_service = AnalyticsService(db)
+        
+        result = analytics_service.get_expense_forecast(db_user.id, days)
+        
+        if result['success']:
+            response = f"🔮 Прогноз расходов на {days} дней:\n\n"
+            response += f"📊 Средние дневные расходы: {result['average_daily']:,.0f} ₽\n"
+            response += f"📈 Прогноз общих расходов: {result['forecast_total']:,.0f} ₽\n"
+            response += f"📊 Доверительный интервал: {result['confidence_interval']}\n\n"
+            response += f"📈 Медиана дневных расходов: {result['median_daily']:,.0f} ₽"
+            
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении прогноза: {e}")
+        await message.answer("❌ Произошла ошибка при получении прогноза")
+    finally:
+        db.close()
+
+
+async def trends_command(message: types.Message) -> None:
+    """Обработчик команды /trends - анализ трендов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    days = 30  # По умолчанию 30 дней
+    
+    if len(args) > 1:
+        try:
+            days = int(args[1])
+            if days <= 0 or days > 365:
+                await message.answer("❌ Количество дней должно быть от 1 до 365")
+                return
+        except ValueError:
+            await message.answer("❌ Укажите корректное количество дней")
+            return
+    
+    db = SessionLocal()
+    try:
+        analytics_service = AnalyticsService(db)
+        
+        result = analytics_service.get_spending_trends(db_user.id, days)
+        
+        if result['success']:
+            response = f"📈 Анализ трендов за {days} дней:\n\n"
+            response += f"📊 Направление тренда: {result['trend_direction']}\n"
+            if result['trend_percentage'] != 0:
+                response += f"📈 Изменение: {result['trend_percentage']:+.1f}%\n"
+            response += f"📊 Средние недельные расходы: {result['average_weekly']:,.0f} ₽\n"
+            response += f"📈 Общие расходы за период: {result['total_period']:,.0f} ₽\n\n"
+            
+            response += "📅 По неделям:\n"
+            for week, amount in result['weekly_data'].items():
+                response += f"• {week}: {amount:,.0f} ₽\n"
+            
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при анализе трендов: {e}")
+        await message.answer("❌ Произошла ошибка при анализе трендов")
+    finally:
+        db.close()
+
+
+async def recommendations_command(message: types.Message) -> None:
+    """Обработчик команды /recommendations - рекомендации по экономии"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        analytics_service = AnalyticsService(db)
+        
+        result = analytics_service.get_savings_recommendations(db_user.id)
+        
+        if result['success']:
+            response = f"💡 Рекомендации по экономии:\n\n"
+            response += f"📊 Общие расходы за 30 дней: {result['total_expenses']:,.0f} ₽\n"
+            response += f"📈 Средние дневные расходы: {result['average_daily']:,.0f} ₽\n\n"
+            
+            if result['recommendations']:
+                response += "🎯 Рекомендации:\n"
+                for i, rec in enumerate(result['recommendations'], 1):
+                    response += f"{i}. {rec['suggestion']}\n"
+            else:
+                response += "✅ Ваши расходы выглядят хорошо!"
+            
+            response += "\n📊 Топ категорий расходов:\n"
+            for category, amount in result['top_categories']:
+                response += f"• {category}: {amount:,.0f} ₽\n"
+            
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении рекомендаций: {e}")
+        await message.answer("❌ Произошла ошибка при получении рекомендаций")
+    finally:
+        db.close()
+
+
+async def financial_health_command(message: types.Message) -> None:
+    """Обработчик команды /financial_health - оценка финансового здоровья"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        analytics_service = AnalyticsService(db)
+        
+        result = analytics_service.get_financial_health_score(db_user.id)
+        
+        if result['success']:
+            response = f"{result['emoji']} Оценка финансового здоровья: {result['level']}\n\n"
+            response += f"📊 Общий балл: {result['score']}/100\n"
+            response += f"💰 Общие доходы: {result['total_income']:,.0f} ₽\n"
+            response += f"💸 Общие расходы: {result['total_expenses']:,.0f} ₽\n"
+            response += f"📈 Норма сбережений: {result['savings_rate']:.1f}%\n"
+            response += f"📊 Соотношение расходов к доходам: {result['expense_ratio']:.1f}%\n"
+            response += f"📂 Источники доходов: {result['income_categories']}\n\n"
+            
+            if result['score'] >= 80:
+                response += "🎉 Отличная работа! Ваши финансы в отличном состоянии."
+            elif result['score'] >= 60:
+                response += "👍 Хорошо! Есть возможности для улучшения."
+            elif result['score'] >= 40:
+                response += "⚠️ Требует внимания. Рассмотрите оптимизацию расходов."
+            else:
+                response += "🚨 Требует немедленного внимания. Рекомендуется консультация."
+            
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при оценке финансового здоровья: {e}")
+        await message.answer("❌ Произошла ошибка при оценке финансового здоровья")
+    finally:
+        db.close()
+
+
+async def compare_periods_command(message: types.Message) -> None:
+    """Обработчик команды /compare_periods - сравнение периодов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    args = message.text.split()
+    days = 30  # По умолчанию 30 дней
+    
+    if len(args) > 1:
+        try:
+            days = int(args[1])
+            if days <= 0 or days > 365:
+                await message.answer("❌ Количество дней должно быть от 1 до 365")
+                return
+        except ValueError:
+            await message.answer("❌ Укажите корректное количество дней")
+            return
+    
+    db = SessionLocal()
+    try:
+        analytics_service = AnalyticsService(db)
+        
+        result = analytics_service.get_comparison_with_previous_period(db_user.id, days)
+        
+        if result['success']:
+            response = f"📊 Сравнение периодов ({days} дней):\n\n"
+            
+            response += f"📈 Текущий период:\n"
+            response += f"• Доходы: {result['current_period']['income']:,.0f} ₽\n"
+            response += f"• Расходы: {result['current_period']['expenses']:,.0f} ₽\n"
+            response += f"• Баланс: {result['current_period']['balance']:+,.0f} ₽\n\n"
+            
+            response += f"📉 Предыдущий период:\n"
+            response += f"• Доходы: {result['previous_period']['income']:,.0f} ₽\n"
+            response += f"• Расходы: {result['previous_period']['expenses']:,.0f} ₽\n"
+            response += f"• Баланс: {result['previous_period']['balance']:+,.0f} ₽\n\n"
+            
+            response += f"🔄 Изменения:\n"
+            response += f"• Доходы: {result['changes']['income_trend']} {result['changes']['income_change']:+.1f}%\n"
+            response += f"• Расходы: {result['changes']['expense_trend']} {result['changes']['expense_change']:+.1f}%"
+            
+            await message.answer(response)
+        else:
+            await message.answer(f"❌ {result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сравнении периодов: {e}")
+        await message.answer("❌ Произошла ошибка при сравнении периодов")
     finally:
         db.close()
