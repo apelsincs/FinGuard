@@ -298,8 +298,8 @@ async def add_transaction(message: types.Message) -> None:
         transaction.fraud_reasons = ', '.join(analysis['reasons']) if analysis['reasons'] else None
         
         db.commit()
-        
-        # Формируем ответ
+            
+            # Формируем ответ
         emoji = "💰" if transaction_type == TransactionType.INCOME else "💸"
         type_text = "доход" if transaction_type == TransactionType.INCOME else "расход"
         
@@ -325,8 +325,31 @@ async def add_transaction(message: types.Message) -> None:
             # Создаем уведомление о мошенничестве
             if db_user.fraud_alerts_enabled:
                 fraud_service.create_fraud_alert(transaction, analysis)
+            
+            await message.answer(response)
+        # Формируем ответ
+        emoji = "💰" if transaction_type == TransactionType.INCOME else "💸"
+        type_text = "доход" if transaction_type == TransactionType.INCOME else "расход"
+        
+        response = f"{emoji} Транзакция добавлена!\n\n"
+        response += f"💰 Сумма: {abs_amount} ₽\n"
+        response += f"📝 Описание: {description}\n"
+        response += f"📊 Тип: {type_text}\n"
+        
+        if category_name:
+            response += f"📂 Категория: {category_name}\n"
+        
+        if analysis['is_suspicious']:
+            response += f"⚠️ Подозрительная операция!\n"
+            response += f"🔒 Оценка риска: {analysis['fraud_score']:.1f}/10\n"
+            response += f"📋 Причины: {', '.join(analysis['reasons'])}"
         
         await message.answer(response)
+        
+        # Создаем уведомление о подозрительной операции
+        if analysis['is_suspicious'] and db_user.fraud_alerts_enabled:
+            fraud_service.create_fraud_alert(transaction, analysis)
+        
         logger.info(f"Добавлена транзакция: {abs_amount} ₽ - {description}")
         
     except Exception as e:
