@@ -11,6 +11,10 @@ from .two_factor import TwoFactorService
 from .transaction_status import TransactionStatusService
 from .analytics import AnalyticsService
 from .csv_import import CSVImportService
+from .payment_systems import PaymentSystemService
+from .geolocation import GeolocationService
+from .merchant_detection import MerchantDetectionService
+from .currency_converter import CurrencyConverterService
 
 __all__ = [
     'FraudDetectionService',
@@ -23,5 +27,9 @@ __all__ = [
     'TwoFactorService',
     'TransactionStatusService',
     'AnalyticsService',
-    'CSVImportService'
+    'CSVImportService',
+    'PaymentSystemService',
+    'GeolocationService',
+    'MerchantDetectionService',
+    'CurrencyConverterService'
 ]

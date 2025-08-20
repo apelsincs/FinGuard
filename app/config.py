@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # Telegram Bot Configuration
     telegram_bot_token: str
     telegram_webhook_url: Optional[str] = None
+    telegram_webhook_secret: Optional[str] = None
     
     # Database Configuration
     database_url: str

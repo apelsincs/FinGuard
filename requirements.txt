@@ -31,3 +31,11 @@ pandas>=2.0.0
 
 # Дополнительные утилиты
 Pillow>=10.0.0
+
+# Webhook и API
+fastapi>=0.100.0
+uvicorn>=0.20.0
+
+# HTTP запросы и платежные системы
+requests>=2.31.0
+stripe>=6.0.0
