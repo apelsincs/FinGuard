@@ -14,6 +14,11 @@ from .commands import (
     statistics_command,
     delete_transaction_command,
     balance_command,
+    categories_command,
+    add_category_command,
+    delete_category_command,
+    notifications_command,
+    backup_command,
     get_or_create_user
 )
 
@@ -29,5 +34,10 @@ __all__ = [
     'statistics_command',
     'delete_transaction_command',
     'balance_command',
+    'categories_command',
+    'add_category_command',
+    'delete_category_command',
+    'notifications_command',
+    'backup_command',
     'get_or_create_user'
 ]

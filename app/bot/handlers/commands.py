@@ -8,6 +8,7 @@ from aiogram.filters import Command
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import re
+import os
 
 from app.database.database import SessionLocal
 from app.database.models import User, Transaction, Category, TransactionType, TransactionStatus, Budget, FraudAlert
@@ -118,22 +119,45 @@ async def add_transaction(message: types.Message) -> None:
         await message.answer("❌ Пожалуйста, укажите сумму и описание.\nПример: '500 еда' или '-1000 такси'")
         return
     
-    # Парсим сумму и описание
+    # Парсим сумму, описание и категорию
     try:
-        # Ищем число в начале строки (может быть отрицательным)
-        match = re.match(r'^(-?\d+(?:\.\d+)?)\s+(.+)$', text)
-        if not match:
-            await message.answer(
-                "❌ Неверный формат. Используйте: 'сумма описание'\n"
-                "Примеры:\n"
-                "• 500 еда\n"
-                "• -1000 такси\n"
-                "• 1500.50 зарплата"
-            )
-            return
-        
-        amount = float(match.group(1))
-        description = match.group(2).strip()
+        # Формат: "сумма описание #категория" или "сумма описание"
+        if '#' in text:
+            # Есть категория
+            parts = text.split('#', 1)
+            main_part = parts[0].strip()
+            category_name = parts[1].strip()
+            
+            # Парсим основную часть
+            match = re.match(r'^(-?\d+(?:\.\d+)?)\s+(.+)$', main_part)
+            if not match:
+                await message.answer(
+                    "❌ Неверный формат. Используйте: 'сумма описание #категория'\n"
+                    "Примеры:\n"
+                    "• 500 еда #продукты\n"
+                    "• -1000 такси #транспорт\n"
+                    "• 1500.50 зарплата #доходы"
+                )
+                return
+            
+            amount = float(match.group(1))
+            description = match.group(2).strip()
+        else:
+            # Нет категории
+            match = re.match(r'^(-?\d+(?:\.\d+)?)\s+(.+)$', text)
+            if not match:
+                await message.answer(
+                    "❌ Неверный формат. Используйте: 'сумма описание' или 'сумма описание #категория'\n"
+                    "Примеры:\n"
+                    "• 500 еда\n"
+                    "• -1000 такси #транспорт\n"
+                    "• 1500.50 зарплата #доходы"
+                )
+                return
+            
+            amount = float(match.group(1))
+            description = match.group(2).strip()
+            category_name = None
         
         # Валидация суммы
         if amount == 0:
@@ -171,9 +195,26 @@ async def add_transaction(message: types.Message) -> None:
     
     db = SessionLocal()
     try:
+        # Ищем категорию, если указана
+        category_id = None
+        if category_name:
+            category = db.query(Category).filter(
+                Category.user_id == db_user.id,
+                Category.name == category_name,
+                Category.transaction_type == transaction_type,
+                Category.is_active == True
+            ).first()
+            
+            if category:
+                category_id = category.id
+            else:
+                # Категория не найдена, но продолжаем без неё
+                await message.answer(f"⚠️ Категория '{category_name}' не найдена. Транзакция будет добавлена без категории.")
+        
         # Создаем транзакцию
         transaction = Transaction(
             user_id=db_user.id,
+            category_id=category_id,
             amount=abs_amount,
             currency="RUB",
             description=description,
@@ -205,6 +246,13 @@ async def add_transaction(message: types.Message) -> None:
         response += f"💰 Сумма: {abs_amount} ₽\n"
         response += f"📝 Описание: {description}\n"
         response += f"📊 Тип: {type_text}\n"
+        
+        # Добавляем информацию о категории
+        if category_id:
+            category = db.query(Category).filter(Category.id == category_id).first()
+            if category:
+                response += f"📂 Категория: {category.icon or '📊'} {category.name}\n"
+        
         response += f"✅ Статус: Подтверждена"
         
         # Добавляем предупреждение о подозрительности
@@ -266,6 +314,13 @@ async def view_transactions(message: types.Message) -> None:
                 total_income += transaction.amount
             
             response += f"{i}. {emoji} {sign}{transaction.amount} ₽ - {transaction.description}\n"
+            
+            # Добавляем информацию о категории
+            if transaction.category_id:
+                category = db.query(Category).filter(Category.id == transaction.category_id).first()
+                if category:
+                    response += f"   📂 {category.icon or '📊'} {category.name}\n"
+            
             response += f"   📅 {transaction.created_at.strftime('%d.%m.%Y %H:%M')}\n\n"
         
         # Добавляем итоги
@@ -802,5 +857,397 @@ async def balance_command(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при получении баланса: {e}")
         await message.answer("❌ Ошибка при получении баланса")
+    finally:
+        db.close()
+
+
+async def categories_command(message: types.Message) -> None:
+    """Обработчик команды категорий"""
+    user = message.from_user
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        # Получаем все категории пользователя
+        categories = db.query(Category).filter(
+            Category.user_id == db_user.id,
+            Category.is_active == True
+        ).order_by(Category.transaction_type, Category.name).all()
+        
+        if not categories:
+            await message.answer(
+                "📂 У вас пока нет категорий.\n\n"
+                "Создайте категории командой:\n"
+                "/add_category название тип\n\n"
+                "Примеры:\n"
+                "• /add_category Продукты расход\n"
+                "• /add_category Зарплата доход"
+            )
+            return
+        
+        # Группируем по типу
+        income_categories = [c for c in categories if c.transaction_type == TransactionType.INCOME]
+        expense_categories = [c for c in categories if c.transaction_type == TransactionType.EXPENSE]
+        
+        response = "📂 Ваши категории:\n\n"
+        
+        if income_categories:
+            response += "💰 Доходы:\n"
+            for i, cat in enumerate(income_categories, 1):
+                response += f"{i}. {cat.icon or '📊'} {cat.name}\n"
+            response += "\n"
+        
+        if expense_categories:
+            response += "💸 Расходы:\n"
+            for i, cat in enumerate(expense_categories, 1):
+                response += f"{i}. {cat.icon or '📊'} {cat.name}\n"
+        
+        response += "\n💡 Команды:\n"
+        response += "• /add_category название тип - добавить категорию\n"
+        response += "• /edit_category ID название - изменить категорию\n"
+        response += "• /delete_category ID - удалить категорию"
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении категорий: {e}")
+        await message.answer("❌ Ошибка при получении категорий")
+    finally:
+        db.close()
+
+
+async def add_category_command(message: types.Message) -> None:
+    """Обработчик добавления категории"""
+    user = message.from_user
+    text = message.text.strip()
+    
+    # Парсим команду: /add_category название тип
+    parts = text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "📂 Добавление категории\n\n"
+            "Использование: /add_category название тип\n\n"
+            "Примеры:\n"
+            "• /add_category Продукты расход\n"
+            "• /add_category Зарплата доход\n"
+            "• /add_category Рестораны расход\n\n"
+            "Типы: доход, расход"
+        )
+        return
+    
+    name = parts[1].strip()
+    category_type = parts[2].lower().strip()
+    
+    # Валидация
+    if len(name) > 50:
+        await message.answer("❌ Название категории слишком длинное (максимум 50 символов)")
+        return
+    
+    if category_type not in ['доход', 'расход']:
+        await message.answer("❌ Тип должен быть 'доход' или 'расход'")
+        return
+    
+    # Определяем тип транзакции
+    transaction_type = TransactionType.INCOME if category_type == 'доход' else TransactionType.EXPENSE
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        # Проверяем, не существует ли уже такая категория
+        existing = db.query(Category).filter(
+            Category.user_id == db_user.id,
+            Category.name == name,
+            Category.transaction_type == transaction_type,
+            Category.is_active == True
+        ).first()
+        
+        if existing:
+            await message.answer(f"❌ Категория '{name}' уже существует")
+            return
+        
+        # Создаем категорию
+        category = Category(
+            user_id=db_user.id,
+            name=name,
+            transaction_type=transaction_type,
+            icon="📊"  # Базовый значок
+        )
+        
+        db.add(category)
+        db.commit()
+        db.refresh(category)
+        
+        # Формируем ответ
+        type_emoji = "💰" if transaction_type == TransactionType.INCOME else "💸"
+        type_text = "доход" if transaction_type == TransactionType.INCOME else "расход"
+        
+        response = f"✅ Категория создана!\n\n"
+        response += f"📂 Название: {name}\n"
+        response += f"📊 Тип: {type_emoji} {type_text}\n"
+        response += f"🆔 ID: {category.id}"
+        
+        await message.answer(response)
+        logger.info(f"Создана категория: {name} ({type_text})")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании категории: {e}")
+        await message.answer("❌ Ошибка при создании категории")
+        db.rollback()
+    finally:
+        db.close()
+
+
+async def delete_category_command(message: types.Message) -> None:
+    """Обработчик удаления категории"""
+    user = message.from_user
+    text = message.text.strip()
+    
+    # Парсим команду: /delete_category ID
+    parts = text.split()
+    if len(parts) != 2:
+        await message.answer(
+            "🗑️ Удаление категории\n\n"
+            "Использование: /delete_category ID\n"
+            "Пример: /delete_category 123\n\n"
+            "Чтобы найти ID категории, используйте /categories"
+        )
+        return
+    
+    try:
+        category_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID категории должен быть числом")
+        return
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        # Находим категорию
+        category = db.query(Category).filter(
+            Category.id == category_id,
+            Category.user_id == db_user.id,
+            Category.is_active == True
+        ).first()
+        
+        if not category:
+            await message.answer("❌ Категория не найдена или у вас нет прав на её удаление")
+            return
+        
+        # Проверяем, есть ли транзакции в этой категории
+        transactions_count = db.query(Transaction).filter(
+            Transaction.category_id == category_id
+        ).count()
+        
+        if transactions_count > 0:
+            await message.answer(
+                f"❌ Нельзя удалить категорию '{category.name}'\n\n"
+                f"В ней есть {transactions_count} транзакций.\n"
+                "Сначала переместите или удалите эти транзакции."
+            )
+            return
+        
+        # Сохраняем информацию для лога
+        name = category.name
+        transaction_type = category.transaction_type
+        
+        # Удаляем категорию (мягкое удаление)
+        category.is_active = False
+        db.commit()
+        
+        # Формируем ответ
+        type_emoji = "💰" if transaction_type == TransactionType.INCOME else "💸"
+        type_text = "доход" if transaction_type == TransactionType.INCOME else "расход"
+        
+        response = f"🗑️ Категория удалена!\n\n"
+        response += f"📂 Название: {name}\n"
+        response += f"📊 Тип: {type_emoji} {type_text}\n"
+        response += f"🆔 ID: {category_id}"
+        
+        await message.answer(response)
+        logger.info(f"Удалена категория {category_id}: {name}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при удалении категории: {e}")
+        await message.answer("❌ Ошибка при удалении категории")
+        db.rollback()
+    finally:
+        db.close()
+
+
+async def notifications_command(message: types.Message) -> None:
+    """Обработчик команды уведомлений"""
+    user = message.from_user
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        from app.services.notifications import NotificationService
+        
+        # Получаем уведомления
+        notification_service = NotificationService(db)
+        notifications = notification_service.get_user_notifications(db_user.id)
+        
+        # Форматируем уведомления
+        response = notification_service.format_notifications(notifications)
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении уведомлений: {e}")
+        await message.answer("❌ Ошибка при получении уведомлений")
+    finally:
+        db.close()
+
+
+async def backup_command(message: types.Message) -> None:
+    """Обработчик команды резервного копирования"""
+    user = message.from_user
+    text = message.text.strip()
+    
+    # Парсим команду: /backup create или /backup list
+    parts = text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "💾 Резервное копирование\n\n"
+            "Команды:\n"
+            "• /backup create - создать резервную копию\n"
+            "• /backup list - список резервных копий\n"
+            "• /backup restore filename - восстановить из копии\n"
+            "• /backup delete filename - удалить копию\n\n"
+            "Примеры:\n"
+            "• /backup create\n"
+            "• /backup restore backup_user_123_20250820_143022.json"
+        )
+        return
+    
+    action = parts[1].lower()
+    
+    # Получаем пользователя
+    db_user = get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    db = SessionLocal()
+    try:
+        from app.services.backup import BackupService
+        
+        backup_service = BackupService(db)
+        
+        if action == "create":
+            # Создаем резервную копию
+            result = backup_service.create_user_backup(db_user.id)
+            
+            if result['success']:
+                response = f"✅ Резервная копия создана!\n\n"
+                response += f"📁 Файл: {result['filename']}\n"
+                response += f"💰 Транзакций: {result['transactions_count']}\n"
+                response += f"📂 Категорий: {result['categories_count']}\n"
+                response += f"📊 Бюджетов: {result['budgets_count']}\n"
+                response += f"🔒 Уведомлений: {result['alerts_count']}"
+            else:
+                response = f"❌ Ошибка: {result['error']}"
+            
+            await message.answer(response)
+            
+        elif action == "list":
+            # Показываем список резервных копий
+            backups = backup_service.list_backups(db_user.id)
+            
+            if not backups:
+                await message.answer("📭 У вас нет резервных копий")
+                return
+            
+            response = "📁 Ваши резервные копии:\n\n"
+            
+            for i, backup in enumerate(backups[:5], 1):  # Показываем только 5 последних
+                response += f"{i}. {backup['filename']}\n"
+                response += f"   📅 {backup['created_at'].strftime('%d.%m.%Y %H:%M')}\n"
+                response += f"   📏 {backup['size'] / 1024:.1f} KB\n\n"
+            
+            if len(backups) > 5:
+                response += f"... и еще {len(backups) - 5} копий\n\n"
+            
+            response += "💡 Команды:\n"
+            response += "• /backup restore filename - восстановить\n"
+            response += "• /backup delete filename - удалить"
+            
+            await message.answer(response)
+            
+        elif action == "restore":
+            if len(parts) < 3:
+                await message.answer("❌ Укажите имя файла для восстановления")
+                return
+            
+            filename = parts[2]
+            
+            # Восстанавливаем из резервной копии
+            result = backup_service.restore_user_backup(
+                os.path.join("backups", filename), 
+                db_user.id
+            )
+            
+            if result['success']:
+                response = f"✅ Данные восстановлены!\n\n"
+                response += f"📂 Категорий: {result['categories_restored']}\n"
+                response += f"📊 Бюджетов: {result['budgets_restored']}\n"
+                response += f"💰 Транзакций: {result['transactions_restored']}\n"
+                response += f"📈 Всего восстановлено: {result['restored_count']}"
+            else:
+                response = f"❌ Ошибка: {result['error']}"
+            
+            await message.answer(response)
+            
+        elif action == "delete":
+            if len(parts) < 3:
+                await message.answer("❌ Укажите имя файла для удаления")
+                return
+            
+            filename = parts[2]
+            
+            # Удаляем резервную копию
+            result = backup_service.delete_backup(filename)
+            
+            if result['success']:
+                await message.answer("✅ Резервная копия удалена")
+            else:
+                await message.answer(f"❌ Ошибка: {result['error']}")
+        
+        else:
+            await message.answer("❌ Неизвестное действие. Используйте: create, list, restore, delete")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при работе с резервными копиями: {e}")
+        await message.answer("❌ Ошибка при работе с резервными копиями")
     finally:
         db.close()

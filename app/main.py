@@ -21,7 +21,12 @@ from app.bot.handlers import (
     settings_command,
     statistics_command,
     delete_transaction_command,
-    balance_command
+    balance_command,
+    categories_command,
+    add_category_command,
+    delete_category_command,
+    notifications_command,
+    backup_command
 )
 
 logger = get_logger(__name__)
@@ -72,6 +77,11 @@ async def main() -> None:
     dp.message.register(statistics_command, Command("stats"))
     dp.message.register(delete_transaction_command, Command("delete"))
     dp.message.register(balance_command, Command("balance"))
+    dp.message.register(categories_command, Command("categories"))
+    dp.message.register(add_category_command, Command("add_category"))
+    dp.message.register(delete_category_command, Command("delete_category"))
+    dp.message.register(notifications_command, Command("notifications"))
+    dp.message.register(backup_command, Command("backup"))
     
     # Обработчик всех текстовых сообщений (для добавления транзакций)
     dp.message.register(add_transaction)
