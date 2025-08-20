@@ -26,7 +26,16 @@ from app.bot.handlers import (
     add_category_command,
     delete_category_command,
     notifications_command,
-    backup_command
+    backup_command,
+    chart_expenses_command,
+    chart_income_command,
+    chart_categories_command,
+    chart_balance_command,
+    chart_budget_command,
+    export_excel_command,
+    export_csv_command,
+    export_pdf_command,
+    monthly_report_command
 )
 
 logger = get_logger(__name__)
@@ -82,6 +91,15 @@ async def main() -> None:
     dp.message.register(delete_category_command, Command("delete_category"))
     dp.message.register(notifications_command, Command("notifications"))
     dp.message.register(backup_command, Command("backup"))
+    dp.message.register(chart_expenses_command, Command("chart_expenses"))
+    dp.message.register(chart_income_command, Command("chart_income"))
+    dp.message.register(chart_categories_command, Command("chart_categories"))
+    dp.message.register(chart_balance_command, Command("chart_balance"))
+    dp.message.register(chart_budget_command, Command("chart_budget"))
+    dp.message.register(export_excel_command, Command("export_excel"))
+    dp.message.register(export_csv_command, Command("export_csv"))
+    dp.message.register(export_pdf_command, Command("export_pdf"))
+    dp.message.register(monthly_report_command, Command("monthly_report"))
     
     # Обработчик всех текстовых сообщений (для добавления транзакций)
     dp.message.register(add_transaction)

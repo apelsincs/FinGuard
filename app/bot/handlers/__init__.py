@@ -19,6 +19,15 @@ from .commands import (
     delete_category_command,
     notifications_command,
     backup_command,
+    chart_expenses_command,
+    chart_income_command,
+    chart_categories_command,
+    chart_balance_command,
+    chart_budget_command,
+    export_excel_command,
+    export_csv_command,
+    export_pdf_command,
+    monthly_report_command,
     get_or_create_user
 )
 
@@ -39,5 +48,14 @@ __all__ = [
     'delete_category_command',
     'notifications_command',
     'backup_command',
+    'chart_expenses_command',
+    'chart_income_command',
+    'chart_categories_command',
+    'chart_balance_command',
+    'chart_budget_command',
+    'export_excel_command',
+    'export_csv_command',
+    'export_pdf_command',
+    'monthly_report_command',
     'get_or_create_user'
 ]

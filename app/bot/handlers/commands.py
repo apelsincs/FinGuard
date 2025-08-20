@@ -13,6 +13,10 @@ import os
 from app.database.database import SessionLocal
 from app.database.models import User, Transaction, Category, TransactionType, TransactionStatus, Budget, FraudAlert
 from app.services.fraud_detection import FraudDetectionService
+from app.services.notifications import NotificationService
+from app.services.backup import BackupService
+from app.services.visualization import VisualizationService
+from app.services.reports import ReportService
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -87,6 +91,19 @@ async def help_command(message: types.Message) -> None:
 • /budget - Просмотр бюджета
 • /set_budget - Установить бюджет
 • /stats - Статистика за 30 дней
+
+📈 Графики и визуализация:
+• /chart_expenses - График расходов
+• /chart_income - График доходов
+• /chart_categories - Диаграмма по категориям
+• /chart_balance - График баланса
+• /chart_budget - График бюджета
+
+📄 Экспорт отчетов:
+• /export_excel - Экспорт в Excel
+• /export_csv - Экспорт в CSV
+• /export_pdf - Экспорт в PDF
+• /monthly_report - Месячный отчет
 
 🔒 Безопасность:
 • /alerts - Уведомления о подозрительных операциях
@@ -1249,5 +1266,391 @@ async def backup_command(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при работе с резервными копиями: {e}")
         await message.answer("❌ Ошибка при работе с резервными копиями")
+    finally:
+        db.close()
+
+
+async def chart_expenses_command(message: types.Message) -> None:
+    """Обработчик команды /chart_expenses - график расходов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        viz_service = VisualizationService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю график расходов...")
+        
+        chart_path = viz_service.create_expense_chart(db_user.id, days)
+        
+        if chart_path:
+            with open(chart_path, 'rb') as photo:
+                await message.answer_photo(
+                    photo,
+                    caption=f"📈 График расходов за последние {days} дней"
+                )
+        else:
+            await message.answer("❌ Не удалось создать график. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании графика расходов: {e}")
+        await message.answer("❌ Произошла ошибка при создании графика")
+    finally:
+        db.close()
+
+
+async def chart_income_command(message: types.Message) -> None:
+    """Обработчик команды /chart_income - график доходов"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        viz_service = VisualizationService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю график доходов...")
+        
+        chart_path = viz_service.create_income_chart(db_user.id, days)
+        
+        if chart_path:
+            with open(chart_path, 'rb') as photo:
+                await message.answer_photo(
+                    photo,
+                    caption=f"📈 График доходов за последние {days} дней"
+                )
+        else:
+            await message.answer("❌ Не удалось создать график. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании графика доходов: {e}")
+        await message.answer("❌ Произошла ошибка при создании графика")
+    finally:
+        db.close()
+
+
+async def chart_categories_command(message: types.Message) -> None:
+    """Обработчик команды /chart_categories - диаграмма по категориям"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        viz_service = VisualizationService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю диаграмму по категориям...")
+        
+        chart_path = viz_service.create_category_pie_chart(db_user.id, days)
+        
+        if chart_path:
+            with open(chart_path, 'rb') as photo:
+                await message.answer_photo(
+                    photo,
+                    caption=f"📊 Диаграмма по категориям за последние {days} дней"
+                )
+        else:
+            await message.answer("❌ Не удалось создать диаграмму. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании диаграммы категорий: {e}")
+        await message.answer("❌ Произошла ошибка при создании диаграммы")
+    finally:
+        db.close()
+
+
+async def chart_balance_command(message: types.Message) -> None:
+    """Обработчик команды /chart_balance - график баланса"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        viz_service = VisualizationService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю график баланса...")
+        
+        chart_path = viz_service.create_balance_chart(db_user.id, days)
+        
+        if chart_path:
+            with open(chart_path, 'rb') as photo:
+                await message.answer_photo(
+                    photo,
+                    caption=f"📈 График баланса за последние {days} дней"
+                )
+        else:
+            await message.answer("❌ Не удалось создать график. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании графика баланса: {e}")
+        await message.answer("❌ Произошла ошибка при создании графика")
+    finally:
+        db.close()
+
+
+async def chart_budget_command(message: types.Message) -> None:
+    """Обработчик команды /chart_budget - график бюджета"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        viz_service = VisualizationService(db)
+        
+        await message.answer("📊 Создаю график бюджета...")
+        
+        chart_path = viz_service.create_budget_chart(db_user.id)
+        
+        if chart_path:
+            with open(chart_path, 'rb') as photo:
+                await message.answer_photo(
+                    photo,
+                    caption="📊 График использования бюджета"
+                )
+        else:
+            await message.answer("❌ Не удалось создать график. Возможно, у вас нет активных бюджетов.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании графика бюджета: {e}")
+        await message.answer("❌ Произошла ошибка при создании графика")
+    finally:
+        db.close()
+
+
+async def export_excel_command(message: types.Message) -> None:
+    """Обработчик команды /export_excel - экспорт в Excel"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        report_service = ReportService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю Excel отчет...")
+        
+        report_path = report_service.export_to_excel(db_user.id, days)
+        
+        if report_path:
+            with open(report_path, 'rb') as file:
+                await message.answer_document(
+                    file,
+                    caption=f"📈 Excel отчет за последние {days} дней"
+                )
+        else:
+            await message.answer("❌ Не удалось создать отчет. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании Excel отчета: {e}")
+        await message.answer("❌ Произошла ошибка при создании отчета")
+    finally:
+        db.close()
+
+
+async def export_csv_command(message: types.Message) -> None:
+    """Обработчик команды /export_csv - экспорт в CSV"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        report_service = ReportService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю CSV отчет...")
+        
+        report_path = report_service.export_to_csv(db_user.id, days)
+        
+        if report_path:
+            with open(report_path, 'rb') as file:
+                await message.answer_document(
+                    file,
+                    caption=f"📈 CSV отчет за последние {days} days"
+                )
+        else:
+            await message.answer("❌ Не удалось создать отчет. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании CSV отчета: {e}")
+        await message.answer("❌ Произошла ошибка при создании отчета")
+    finally:
+        db.close()
+
+
+async def export_pdf_command(message: types.Message) -> None:
+    """Обработчик команды /export_pdf - экспорт в PDF"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        report_service = ReportService(db)
+        
+        # Парсим количество дней из команды
+        args = message.text.split()
+        days = 30  # По умолчанию 30 дней
+        
+        if len(args) > 1:
+            try:
+                days = int(args[1])
+                if days <= 0 or days > 365:
+                    await message.answer("❌ Количество дней должно быть от 1 до 365")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректное количество дней")
+                return
+        
+        await message.answer("📊 Создаю PDF отчет...")
+        
+        report_path = report_service.export_to_pdf(db_user.id, days)
+        
+        if report_path:
+            with open(report_path, 'rb') as file:
+                await message.answer_document(
+                    file,
+                    caption=f"📈 PDF отчет за последние {days} дней"
+                )
+        else:
+            await message.answer("❌ Не удалось создать отчет. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании PDF отчета: {e}")
+        await message.answer("❌ Произошла ошибка при создании отчета")
+    finally:
+        db.close()
+
+
+async def monthly_report_command(message: types.Message) -> None:
+    """Обработчик команды /monthly_report - месячный отчет"""
+    user = message.from_user
+    db_user = get_or_create_user(user.id, user.username, user.first_name, user.last_name)
+    
+    db = SessionLocal()
+    try:
+        report_service = ReportService(db)
+        
+        # Парсим год и месяц из команды
+        args = message.text.split()
+        year = None
+        month = None
+        
+        if len(args) > 1:
+            try:
+                # Формат: /monthly_report 2024 12
+                if len(args) >= 3:
+                    year = int(args[1])
+                    month = int(args[2])
+                else:
+                    # Формат: /monthly_report 12 (текущий год)
+                    month = int(args[1])
+                    year = datetime.now().year
+                
+                if year < 2020 or year > 2030:
+                    await message.answer("❌ Год должен быть от 2020 до 2030")
+                    return
+                if month < 1 or month > 12:
+                    await message.answer("❌ Месяц должен быть от 1 до 12")
+                    return
+            except ValueError:
+                await message.answer("❌ Укажите корректный год и месяц")
+                return
+        
+        await message.answer("📊 Создаю месячный отчет...")
+        
+        report_path = report_service.create_monthly_report(db_user.id, year, month)
+        
+        if report_path:
+            with open(report_path, 'rb') as file:
+                period = f"{year or datetime.now().year} {month or datetime.now().month:02d}"
+                await message.answer_document(
+                    file,
+                    caption=f"📈 Месячный отчет за {period}"
+                )
+        else:
+            await message.answer("❌ Не удалось создать отчет. Возможно, нет данных за указанный период.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при создании месячного отчета: {e}")
+        await message.answer("❌ Произошла ошибка при создании отчета")
     finally:
         db.close()
